@@ -3,6 +3,7 @@ import { openBulk } from "./bulk.mjs";
 import { ID, t, fmtSize, config } from "./shared.mjs";
 
 const { NumberField, StringField, BooleanField } = foundry.data.fields;
+const get = k => game.settings.get(ID, k);
 
 Hooks.once("init", () => {
   const reg = (key, data) => game.settings.register(ID, key, { scope: "world", config: true, ...data });
@@ -15,6 +16,8 @@ Hooks.once("init", () => {
   reg("video", { name: "LMO.Set.Video", type: new BooleanField({ initial: true }) });
   reg("videoMaxHeight", { name: "LMO.Set.VideoMaxHeight", hint: "LMO.Set.VideoMaxHeightHint", type: new NumberField({ initial: 1080, min: 0, integer: true, nullable: false }) });
   reg("videoQuality", { name: "LMO.Set.VideoQuality", type: new StringField({ initial: "medium", choices: { low: "Low (smallest)", medium: "Medium", high: "High" } }) });
+  reg("pickerOnly", { name: "LMO.Set.PickerOnly", hint: "LMO.Set.PickerOnlyHint", type: new BooleanField({ initial: false }) });
+  reg("excludePaths", { name: "LMO.Set.ExcludePaths", hint: "LMO.Set.ExcludePathsHint", type: new StringField({ initial: "modules/, systems/" }) });
   reg("minKB", { name: "LMO.Set.MinKB", type: new NumberField({ initial: 20, min: 0, integer: true, nullable: false }) });
   reg("keepIfLarger", { name: "LMO.Set.KeepIfLarger", type: new BooleanField({ initial: true }) });
 });
@@ -26,7 +29,8 @@ async function optimizeForUpload(file) {
   try {
     const r = await optimize(file, config(), p => note?.update?.({ pct: p }));
     if (!r) return file;
-    const pct = `-${Math.round((1 - r.after / r.before) * 100)}%`;
+    const delta = Math.round((1 - r.after / r.before) * 100);
+    const pct = delta >= 0 ? `-${delta}%` : `+${-delta}%`;
     ui.notifications.info(t("Saved", { name: file.name, before: fmtSize(r.before), after: fmtSize(r.after), pct }));
     return r.file;
   } catch (err) {
@@ -39,11 +43,29 @@ async function optimizeForUpload(file) {
   }
 }
 
+/**
+ * Other code that builds the stored path from the ORIGINAL file name (instead of using the path Foundry returns)
+ * breaks when the extension changes. Escape hatches: options.skipOptimize = true on the upload call, excluded folders,
+ * or "file picker only" (Foundry's own picker window always sends a `bucket` field).
+ */
+function shouldOptimize(path, body, options, file) {
+  if (!(file instanceof File) || options?.skipOptimize || !get("enabled")) return false;
+  const target = String(path ?? "").replace(/^\/+/, "");
+  const excluded = get("excludePaths").split(",").map(s => s.trim().replace(/^\/+/, "")).filter(Boolean);
+  if (excluded.some(p => target.startsWith(p))) return false;
+  if (get("pickerOnly") && !(body && "bucket" in body)) return false;
+  return true;
+}
+
 Hooks.once("ready", () => {
   const FP = CONFIG.ux.FilePicker;
   const original = FP.upload;
   FP.upload = async function (source, path, file, body = {}, options = {}) {
-    if (game.settings.get(ID, "enabled") && !options.skipOptimize && file instanceof File) file = await optimizeForUpload(file);
+    try {
+      if (shouldOptimize(path, body, options, file)) file = await optimizeForUpload(file);
+    } catch (err) {
+      console.warn(`${ID} | optimization skipped`, err);   // never let this module block an upload
+    }
     return original.call(this, source, path, file, body, options);
   };
   game.modules.get(ID).api = { optimize: f => optimize(f, config()), optimizeFolder: openBulk };

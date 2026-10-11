@@ -32,5 +32,9 @@
   "LMO.Bulk.RefsDone": "Updated {count} references in {docs} documents.",
   "LMO.Bulk.Report": "Report",
   "LMO.Close": "Close",
-  "LMO.Bulk.Protected": "Folders inside modules/ and systems/ are never optimized."
+  "LMO.Bulk.Protected": "Folders inside modules/ and systems/ are never optimized.",
+  "LMO.Set.PickerOnly": "Only optimize uploads made in Foundry's file picker window",
+  "LMO.Set.PickerOnlyHint": "Turn this on if another module uploads files and then expects the original file name/extension. Uploads from that module are then left untouched.",
+  "LMO.Set.ExcludePaths": "Never optimize uploads into these folders",
+  "LMO.Set.ExcludePathsHint": "Comma-separated folder prefixes, e.g. modules/, systems/, assets/raw/"
 }
