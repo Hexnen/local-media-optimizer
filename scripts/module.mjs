@@ -16,27 +16,22 @@ Hooks.once("init", () => {
   reg("video", { name: "LMO.Set.Video", type: new BooleanField({ initial: true }) });
   reg("videoMaxHeight", { name: "LMO.Set.VideoMaxHeight", hint: "LMO.Set.VideoMaxHeightHint", type: new NumberField({ initial: 1080, min: 0, integer: true, nullable: false }) });
   reg("videoQuality", { name: "LMO.Set.VideoQuality", type: new StringField({ initial: "medium", choices: { low: "Low (smallest)", medium: "Medium", high: "High" } }) });
-  reg("pickerOnly", { name: "LMO.Set.PickerOnly", hint: "LMO.Set.PickerOnlyHint", type: new BooleanField({ initial: false }) });
+  reg("pickerOnly", { name: "LMO.Set.PickerOnly", hint: "LMO.Set.PickerOnlyHint", type: new BooleanField({ initial: true }) });
   reg("excludePaths", { name: "LMO.Set.ExcludePaths", hint: "LMO.Set.ExcludePathsHint", type: new StringField({ initial: "modules/, systems/" }) });
   reg("minKB", { name: "LMO.Set.MinKB", type: new NumberField({ initial: 20, min: 0, integer: true, nullable: false }) });
   reg("keepIfLarger", { name: "LMO.Set.KeepIfLarger", type: new BooleanField({ initial: true }) });
 });
 
-/** Optimize with a progress notification. Never throws: returns the File to upload (the original on failure). */
+/** Optimize with a progress notification. Never throws: resolves to the optimize() result, or null to upload the original. */
 async function optimizeForUpload(file) {
-  if (!kindOf(file.name)) return file;
+  if (!kindOf(file.name)) return null;
   const note = ui.notifications.info(t("Optimizing", { name: file.name }), { progress: true });
   try {
-    const r = await optimize(file, config(), p => note?.update?.({ pct: p }));
-    if (!r) return file;
-    const delta = Math.round((1 - r.after / r.before) * 100);
-    const pct = delta >= 0 ? `-${delta}%` : `+${-delta}%`;
-    ui.notifications.info(t("Saved", { name: file.name, before: fmtSize(r.before), after: fmtSize(r.after), pct }));
-    return r.file;
+    return await optimize(file, config(), p => note?.update?.({ pct: p }));
   } catch (err) {
     console.warn(`${ID} |`, err);
     ui.notifications.warn(t("Failed", { name: file.name, msg: err.message }));
-    return file;
+    return null;
   } finally {
     note?.update?.({ pct: 1 });
     setTimeout(() => ui.notifications.remove?.(note), 300);
@@ -46,7 +41,7 @@ async function optimizeForUpload(file) {
 /**
  * Other code that builds the stored path from the ORIGINAL file name (instead of using the path Foundry returns)
  * breaks when the extension changes. Escape hatches: options.skipOptimize = true on the upload call, excluded folders,
- * or "file picker only" (Foundry's own picker window always sends a `bucket` field).
+ * or "file picker only" (default; Foundry's own picker window always sends a `bucket` field).
  */
 function shouldOptimize(path, body, options, file) {
   if (!(file instanceof File) || options?.skipOptimize || !get("enabled")) return false;
@@ -57,16 +52,44 @@ function shouldOptimize(path, body, options, file) {
   return true;
 }
 
+const decName = f => { const n = f.split("/").pop(); try { return decodeURIComponent(n).toLowerCase(); } catch { return n.toLowerCase(); } };
+
+/** The converted name (e.g. map.webp) must not replace a different existing file: add -1, -2... when it is taken. */
+async function uniqueFile(FP, source, path, file, body) {
+  let listing;
+  try { listing = await FP.browse(source, path, { bucket: body?.bucket ?? null }); } catch { return file; }
+  const taken = new Set((listing.files ?? []).map(decName));
+  if (!taken.has(file.name.toLowerCase())) return file;
+  const dot = file.name.lastIndexOf(".");
+  for (let i = 1; i < 1000; i++) {
+    const name = `${file.name.slice(0, dot)}-${i}${file.name.slice(dot)}`;
+    if (!taken.has(name.toLowerCase())) return new File([file], name, { type: file.type });
+  }
+  return file;
+}
+
 Hooks.once("ready", () => {
   const FP = CONFIG.ux.FilePicker;
   const original = FP.upload;
   FP.upload = async function (source, path, file, body = {}, options = {}) {
+    let notice = null;
     try {
-      if (shouldOptimize(path, body, options, file)) file = await optimizeForUpload(file);
+      if (shouldOptimize(path, body, options, file)) {
+        const r = await optimizeForUpload(file);
+        if (r) {
+          let out = r.file;
+          if (out.name !== file.name) out = await uniqueFile(FP, source, path, out, body);
+          const delta = Math.round((1 - r.after / r.before) * 100);
+          notice = t("Saved", { name: file.name, before: fmtSize(r.before), after: fmtSize(r.after), pct: delta >= 0 ? `-${delta}%` : `+${-delta}%` });
+          file = out;
+        }
+      }
     } catch (err) {
       console.warn(`${ID} | optimization skipped`, err);   // never let this module block an upload
     }
-    return original.call(this, source, path, file, body, options);
+    const result = await original.call(this, source, path, file, body, options);
+    if (notice && result?.path) ui.notifications.info(notice);   // only after the server accepted the file
+    return result;
   };
   game.modules.get(ID).api = { optimize: f => optimize(f, config()), optimizeFolder: openBulk };
 });
