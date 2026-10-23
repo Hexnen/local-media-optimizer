@@ -2,7 +2,7 @@
   "id": "local-media-optimizer",
   "title": "Media Optimizer (Local)",
   "description": "Automatically converts everything you upload to Foundry - images to WebP, audio to Ogg/Opus, video to WebM - right in the browser. No external program needed. Includes a bulk folder optimizer.",
-  "version": "1.0.2",
+  "version": "1.1.0",
   "compatibility": {
     "minimum": "13",
     "verified": "14"

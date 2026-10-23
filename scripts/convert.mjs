@@ -67,23 +67,60 @@ async function isAnimated(file, ext) {
 
 const MAX_SIDE = 16384, MAX_AREA = 268e6;   // canvas limits in Chromium
 
-export async function convertImage(file, { quality = 0.75, maxDim = 8192 } = {}) {
+const IMAGE_FORMATS = {
+  webp: { mime: "image/webp", ext: "webp", name: "webp" },
+  jpeg: { mime: "image/jpeg", ext: "jpg", name: "jpeg" },   // no alpha: transparent areas turn black
+  png: { mime: "image/png", ext: "png", name: "png" }
+};
+/** Output image format description for "webp" | "jpeg" | "jpg" | "png" (anything else -> webp). */
+export const imageFormat = f => IMAGE_FORMATS[String(f ?? "webp").toLowerCase().replace("jpg", "jpeg")] ?? IMAGE_FORMATS.webp;
+
+export async function convertImage(file, { quality = 0.75, maxDim = 8192, maxPixels = 0, format = "webp" } = {}) {
   const ext = extOf(file.name);
+  const fmt = imageFormat(format);
   if (await isAnimated(file, ext)) return null;                          // canvas would keep only the first frame
   const bmp = await createImageBitmap(file);
   try {
     const limit = Math.min(maxDim || MAX_SIDE, MAX_SIDE);
-    const scale = Math.min(1, limit / Math.max(bmp.width, bmp.height), Math.sqrt(MAX_AREA / (bmp.width * bmp.height)));
-    if (ext === "webp" && scale === 1) return null;                      // already WebP and not too big
+    let scale = Math.min(1, limit / Math.max(bmp.width, bmp.height), Math.sqrt(MAX_AREA / (bmp.width * bmp.height)));
+    if (maxPixels > 0) scale = Math.min(scale, Math.sqrt(maxPixels / (bmp.width * bmp.height)));
+    const sameFormat = ext === fmt.ext || (fmt.ext === "jpg" && ext === "jpeg");
+    if (sameFormat && scale === 1) return null;                          // already in the target format and not too big
     const w = Math.max(1, Math.round(bmp.width * scale)), h = Math.max(1, Math.round(bmp.height * scale));
     const canvas = new OffscreenCanvas(w, h);
     const ctx = canvas.getContext("2d");
     ctx.imageSmoothingQuality = "high";
     ctx.drawImage(bmp, 0, 0, w, h);
-    const blob = await canvas.convertToBlob({ type: "image/webp", quality });
-    if (blob.type !== "image/webp") return null;                         // browser cannot encode WebP
-    return { blob, name: `${stem(file.name)}.webp`, scaled: scale < 1 };
+    const blob = await canvas.convertToBlob({ type: fmt.mime, quality });
+    if (blob.type !== fmt.mime) return null;                             // browser cannot encode this format
+    return { blob, name: `${stem(file.name)}.${fmt.ext}`, scaled: scale < 1, width: w, height: h };
   } finally { bmp.close?.(); }
+}
+
+const MIME_EXT = { "image/png": "png", "image/jpeg": "jpg", "image/webp": "webp", "image/avif": "avif", "image/bmp": "bmp" };
+
+/**
+ * Optimize an image Blob/File (public API). Never enlarges; a downscaled result is always kept.
+ * Resolves to { blob, changed, width, height, bytesBefore, bytesAfter, format }; when nothing worthwhile came out
+ * (already small enough, not smaller, animated, undecodable format) `blob` is the input and `changed` is false.
+ */
+export async function optimizeImageBlob(blob, { maxEdge = 8192, maxPixels = 0, quality = 0.75, format = "webp", minGain = 0, keepIfLarger = true } = {}) {
+  const before = blob.size;
+  const ext = MIME_EXT[blob.type] ?? (blob.name ? extOf(blob.name) : "png");
+  const file = new File([blob], `image.${ext}`, { type: blob.type });
+  const unchanged = async () => {
+    let width = null, height = null;
+    try { const b = await createImageBitmap(blob); width = b.width; height = b.height; b.close?.(); } catch { /* unknown size */ }
+    return { blob, changed: false, width, height, bytesBefore: before, bytesAfter: before, format: ext === "jpg" ? "jpeg" : ext };
+  };
+  const out = await convertImage(file, { quality, maxDim: maxEdge, maxPixels, format });
+  if (!out) return unchanged();
+  const gain = 1 - out.blob.size / before;
+  if (!out.scaled && ((keepIfLarger && out.blob.size >= before) || (minGain > 0 && gain < minGain))) return unchanged();
+  return {
+    blob: out.blob, changed: true, width: out.width, height: out.height,
+    bytesBefore: before, bytesAfter: out.blob.size, format: imageFormat(format).name
+  };
 }
 
 export async function convertAudio(file, { bitrate = 128 } = {}, onProgress) {

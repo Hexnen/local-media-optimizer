@@ -39,5 +39,12 @@
   "LMO.Set.ExcludePathsHint": "Comma-separated folder prefixes, e.g. modules/, systems/, assets/raw/",
   "LMO.Bulk.Adopt": "Use existing converted copies",
   "LMO.Bulk.AdoptHint": "For files that already have a converted copy next to them (same name, new extension): point references at that copy instead of skipping.",
-  "LMO.Bulk.RefsScope": "Only world scenes, actors, items, journals, playlists, tables, macros and cards are updated. Users, folders, chat, combats, adventures, settings, compendiums, wildcard token paths and full https:// URLs are not."
+  "LMO.Bulk.RefsScope": "Only world scenes, actors, items, journals, playlists, tables, macros and cards are updated. Users, folders, chat, combats, adventures, settings, compendiums, wildcard token paths and full https:// URLs are not.",
+  "LMO.Set.RespectProfiles": "Respect other modules' optimization profiles",
+  "LMO.Set.RespectProfilesHint": "Modules such as AI Image Gen can register limits for their own folders (largest side, quality, format). A matching profile replaces your global image settings for files in that folder and also lets those uploads through even when 'file picker only' is on. Your excluded folders and the minimum size still win.",
+  "LMO.Bulk.Profiles": "Module profiles",
+  "LMO.Bulk.ProfilesNone": "No module has registered a profile.",
+  "LMO.Bulk.ProfilesHint": "A profile overrides the global image settings for the files it matches. Turn it off with 'Respect other modules' optimization profiles'.",
+  "LMO.Bulk.ProfileHere": "applies to this folder",
+  "LMO.Bulk.ProfileSub": "applies to subfolders"
 }

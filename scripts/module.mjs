@@ -1,5 +1,6 @@
-import { optimize, kindOf } from "./convert.mjs";
+import { optimize, kindOf, optimizeImageBlob } from "./convert.mjs";
 import { openBulk } from "./bulk.mjs";
+import { registerProfile, unregisterProfile, listProfiles, getProfile, applyProfile } from "./profiles.mjs";
 import { ID, t, fmtSize, config } from "./shared.mjs";
 
 const { NumberField, StringField, BooleanField } = foundry.data.fields;
@@ -20,14 +21,34 @@ Hooks.once("init", () => {
   reg("excludePaths", { name: "LMO.Set.ExcludePaths", hint: "LMO.Set.ExcludePathsHint", type: new StringField({ initial: "modules/, systems/" }) });
   reg("minKB", { name: "LMO.Set.MinKB", type: new NumberField({ initial: 20, min: 0, integer: true, nullable: false }) });
   reg("keepIfLarger", { name: "LMO.Set.KeepIfLarger", type: new BooleanField({ initial: true }) });
+  game.settings.register(ID, "respectProfiles", {
+    scope: "client", config: true, name: "LMO.Set.RespectProfiles", hint: "LMO.Set.RespectProfilesHint",
+    type: new BooleanField({ initial: true })
+  });
+
+  // Public API, available from init so other modules can register profiles in their own init/setup/ready.
+  const api = {
+    version: game.modules.get(ID)?.version ?? null,
+    optimize: f => optimize(f, config()),
+    optimizeFolder: openBulk,
+    /** optimizeImage(blob, {maxEdge, maxPixels, quality, format="webp", minGain=0, keepIfLarger=true}) -> {blob, changed, width, height, bytesBefore, bytesAfter, format} */
+    optimizeImage: (blob, opts = {}) => {
+      const c = config();
+      return optimizeImageBlob(blob, {
+        maxEdge: c.image.maxDim, quality: c.image.quality, keepIfLarger: c.keepIfLarger, ...opts
+      });
+    },
+    registerProfile, unregisterProfile, listProfiles, getProfile
+  };
+  game.modules.get(ID).api = api;
 });
 
 /** Optimize with a progress notification. Never throws: resolves to the optimize() result, or null to upload the original. */
-async function optimizeForUpload(file) {
+async function optimizeForUpload(file, profile) {
   if (!kindOf(file.name)) return null;
   const note = ui.notifications.info(t("Optimizing", { name: file.name }), { progress: true });
   try {
-    return await optimize(file, config(), p => note?.update?.({ pct: p }));
+    return await optimize(file, applyProfile(config(), profile), p => note?.update?.({ pct: p }));
   } catch (err) {
     console.warn(`${ID} |`, err);
     ui.notifications.warn(t("Failed", { name: file.name, msg: err.message }));
@@ -39,17 +60,23 @@ async function optimizeForUpload(file) {
 }
 
 /**
+ * Decide whether (and how) an upload is optimized. Returns null to leave the file alone, or { profile } (profile may be null).
  * Other code that builds the stored path from the ORIGINAL file name (instead of using the path Foundry returns)
- * breaks when the extension changes. Escape hatches: options.skipOptimize = true on the upload call, excluded folders,
- * or "file picker only" (default; Foundry's own picker window always sends a `bucket` field).
+ * breaks when the extension changes. Escape hatches, in this order of precedence (all beat a module profile):
+ *   options.skipOptimize = true  - never touch this upload
+ *   options.optimized = true     - the caller already optimized the file (e.g. via api.optimizeImage): don't encode it twice
+ *   the "enabled" setting, excluded folders
+ * "File picker only" (default; Foundry's own picker window always sends a `bucket` field) is the only gate a module profile
+ * can open: a module that registered a profile for a folder opted in to having its uploads optimized.
  */
-function shouldOptimize(path, body, options, file) {
-  if (!(file instanceof File) || options?.skipOptimize || !get("enabled")) return false;
+function decide(path, body, options, file) {
+  if (!(file instanceof File) || options?.skipOptimize || options?.optimized || !get("enabled")) return null;
   const target = String(path ?? "").replace(/^\/+/, "");
   const excluded = get("excludePaths").split(",").map(s => s.trim().replace(/^\/+/, "")).filter(Boolean);
-  if (excluded.some(p => target.startsWith(p))) return false;
-  if (get("pickerOnly") && !(body && "bucket" in body)) return false;
-  return true;
+  if (excluded.some(p => target.startsWith(p))) return null;
+  const profile = get("respectProfiles") ? getProfile(`${target.replace(/\/+$/, "")}/${file.name}`) : null;
+  if (get("pickerOnly") && !(body && "bucket" in body) && !profile) return null;
+  return { profile };
 }
 
 const decName = f => { const n = f.split("/").pop(); try { return decodeURIComponent(n).toLowerCase(); } catch { return n.toLowerCase(); } };
@@ -74,8 +101,9 @@ Hooks.once("ready", () => {
   FP.upload = async function (source, path, file, body = {}, options = {}) {
     let notice = null;
     try {
-      if (shouldOptimize(path, body, options, file)) {
-        const r = await optimizeForUpload(file);
+      const d = decide(path, body, options, file);
+      if (d) {
+        const r = await optimizeForUpload(file, d.profile);
         if (r) {
           let out = r.file;
           if (out.name !== file.name) out = await uniqueFile(FP, source, path, out, body);
@@ -91,7 +119,6 @@ Hooks.once("ready", () => {
     if (notice && result?.path) ui.notifications.info(notice);   // only after the server accepted the file
     return result;
   };
-  game.modules.get(ID).api = { optimize: f => optimize(f, config()), optimizeFolder: openBulk };
 });
 
 Hooks.on("renderFilePicker", (app, html) => {

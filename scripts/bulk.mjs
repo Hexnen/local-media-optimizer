@@ -1,5 +1,6 @@
-import { optimize, kindOf, stem, OUT_EXT } from "./convert.mjs";
-import { t, fmtSize, config } from "./shared.mjs";
+import { optimize, kindOf, stem, OUT_EXT, imageFormat } from "./convert.mjs";
+import { t, fmtSize, config, ID } from "./shared.mjs";
+import { getProfile, listProfiles, applyProfile, normPath } from "./profiles.mjs";
 
 const FP = () => CONFIG.ux.FilePicker;
 const COLLECTIONS = ["scenes", "actors", "items", "journal", "playlists", "tables", "macros", "cards"];
@@ -18,6 +19,25 @@ async function collect(source, dir, recursive, out = []) {
   return out;
 }
 
+const respectProfiles = () => game.settings.get(ID, "respectProfiles");
+
+/** Rows describing the module profiles, marking the ones that apply to the chosen folder. */
+function profilesRow(folder) {
+  if (!respectProfiles()) return "";
+  const esc = foundry.utils.escapeHTML;
+  const list = listProfiles();
+  const dir = normPath(folder).replace(/\/+$/, "");
+  const items = list.map(p => {
+    const bits = [p.maxEdge != null && `${p.maxEdge}px`, p.maxPixels != null && `${(p.maxPixels / 1e6).toFixed(1)} MP`,
+      p.quality != null && `q${p.quality}`, p.format].filter(Boolean).join(", ");
+    const here = getProfile(`${dir ? `${dir}/` : ""}_.png`)?.id === p.id;
+    const sub = !here && p.prefix && (!dir || p.prefix.startsWith(`${dir}/`));
+    const flag = here ? t("Bulk.ProfileHere") : sub ? t("Bulk.ProfileSub") : "";
+    return `<li><b>${esc(p.label)}</b> ${p.prefix ? `<code>${esc(p.prefix)}</code>` : ""} ${esc(bits)} ${flag ? `<em>${esc(flag)}</em>` : ""}</li>`;
+  }).join("");
+  return `<div class="form-group"><label>${t("Bulk.Profiles")}</label><div class="form-fields">${items ? `<ul style="margin:0;padding-left:1.2em">${items}</ul>` : `<em>${t("Bulk.ProfilesNone")}</em>`}</div><p class="hint">${t("Bulk.ProfilesHint")}</p></div>`;
+}
+
 /** Open the bulk optimizer for a FilePicker instance. */
 export async function openBulk(picker) {
   const source = picker.activeSource ?? "data";
@@ -31,7 +51,8 @@ export async function openBulk(picker) {
       <div class="form-group"><label>${t("Bulk.Folder")}</label><div class="form-fields"><input type="text" value="${esc(folder || "/")}" disabled></div></div>
       <div class="form-group"><label>${t("Bulk.Recursive")}</label><div class="form-fields"><input type="checkbox" name="recursive" checked></div></div>
       <div class="form-group"><label>${t("Bulk.Refs")}</label><div class="form-fields"><input type="checkbox" name="refs" checked></div><p class="hint">${t("Bulk.RefsHint")}</p></div>
-      <div class="form-group"><label>${t("Bulk.Adopt")}</label><div class="form-fields"><input type="checkbox" name="adopt"></div><p class="hint">${t("Bulk.AdoptHint")}</p></div>`,
+      <div class="form-group"><label>${t("Bulk.Adopt")}</label><div class="form-fields"><input type="checkbox" name="adopt"></div><p class="hint">${t("Bulk.AdoptHint")}</p></div>
+      ${profilesRow(folder)}`,
     ok: {
       label: t("Bulk.Start"), icon: "fa-solid fa-play",
       callback: (ev, btn) => ({ recursive: btn.form.elements.recursive.checked, refs: btn.form.elements.refs.checked, adopt: btn.form.elements.adopt.checked })
@@ -64,7 +85,10 @@ async function run(source, folder, { recursive, refs, adopt }) {
       note?.update?.({ message: t("Bulk.Progress", { i: i + 1, n: todo.length, name: baseName(path) }), pct: i / todo.length });
       try {
         const dir = dirName(path);
-        const target = `${dir ? `${dir}/` : ""}${stem(baseName(path))}.${OUT_EXT[kindOf(path)]}`;
+        const kind = kindOf(path);
+        const fileCfg = applyProfile(cfg, respectProfiles() ? getProfile(path) : null);   // a module profile overrides the global image settings
+        const outExt = kind === "image" ? imageFormat(fileCfg.image.format).ext : OUT_EXT[kind];
+        const target = `${dir ? `${dir}/` : ""}${stem(baseName(path))}.${outExt}`;
         if (existing.has(key(target))) {            // a converted copy is already there: don't redo the work
           if (adopt) moved.set(path, target);       // ...but optionally point references at it
           stats.skipped++;
@@ -73,7 +97,7 @@ async function run(source, folder, { recursive, refs, adopt }) {
         const res = await fetch(foundry.utils.getRoute(encodeURI(path)));
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const file = new File([await res.blob()], baseName(path));
-        const r = await optimize(file, cfg);
+        const r = await optimize(file, fileCfg);
         if (!r) { stats.skipped++; continue; }
         const up = await FP().upload(source, dir, r.file, {}, { notify: false, skipOptimize: true });
         if (!up?.path) throw new Error("upload failed");
