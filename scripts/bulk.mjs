@@ -67,10 +67,11 @@ export async function openBulk(picker) {
 
 async function run(source, folder, { recursive, refs, adopt }) {
   const cfg = config();
-  const note = ui.notifications.info(t("Bulk.Scanning", { folder: folder || "/" }), { progress: true });
+  const note = ui.notifications.info(t("Bulk.Scanning", { folder: folder || "/" }), { progress: true, console: false });
   const stats = { n: 0, ok: 0, failed: 0, skipped: 0, saved: 0 };
   const log = [];
   const moved = new Map();
+  const made = new Map();   // key(target) -> source path converted in THIS run (a.png and a.jpg both map to a.webp)
   try {
     const all = await collect(source, folder, recursive);
     const existing = new Set(all.map(key));
@@ -92,6 +93,12 @@ async function run(source, folder, { recursive, refs, adopt }) {
         const outExt = kind === "image" ? imageFormat(fileCfg.image.format).ext : OUT_EXT[kind];
         const target = `${dir ? `${dir}/` : ""}${stem(baseName(path))}.${outExt}`;
         if (key(target) === key(path)) { stats.skipped++; continue; }   // already in the output format (e.g. a jpeg profile on .jpg files)
+        const madeFrom = made.get(key(target));
+        if (madeFrom) {                             // another file of this run already produced this name: it is not a copy of this one
+          stats.skipped++;
+          log.push(`SKIPPED ${path}: ${baseName(target)} was just made from ${baseName(madeFrom)}`);
+          continue;
+        }
         if (existing.has(key(target))) {            // a converted copy is already there: don't redo the work
           if (adopt) moved.set(path, target);       // ...but optionally point references at it
           stats.skipped++;
@@ -106,6 +113,7 @@ async function run(source, folder, { recursive, refs, adopt }) {
         const up = await FP().upload(source, dir, r.file, {}, { notify: false, skipOptimize: true });
         if (!up?.path) throw new Error("upload failed");
         existing.add(key(target));
+        made.set(key(target), path);
         moved.set(path, target);
         stats.ok++;
         stats.saved += r.before - r.after;
