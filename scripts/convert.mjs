@@ -97,7 +97,7 @@ export async function convertImage(file, { quality = 0.75, maxDim = 8192, maxPix
   } finally { bmp.close?.(); }
 }
 
-const MIME_EXT = { "image/png": "png", "image/jpeg": "jpg", "image/webp": "webp", "image/avif": "avif", "image/bmp": "bmp" };
+const MIME_EXT = { "image/png": "png", "image/jpeg": "jpg", "image/webp": "webp", "image/avif": "avif", "image/bmp": "bmp", "image/gif": "gif", "image/svg+xml": "svg" };
 
 /**
  * Optimize an image Blob/File (public API). Never enlarges; a downscaled result is always kept.
