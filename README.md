@@ -4,7 +4,7 @@ Converts everything you upload to Foundry, in the browser, with no external prog
 
 | Input | Output |
 | --- | --- |
-| PNG, JPG, BMP, AVIF, TIFF (and oversized WebP) | WebP (quality + max size configurable, never enlarged) |
+| PNG, JPG, BMP, AVIF (and oversized WebP) | WebP (quality + max size configurable, never enlarged) |
 | MP3, WAV, FLAC, M4A, AAC | Ogg (Opus) |
 | MP4, M4V, MOV, MKV | WebM (VP9/VP8 + Opus, max height configurable) |
 
