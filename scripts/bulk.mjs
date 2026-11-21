@@ -40,9 +40,11 @@ function profilesRow(folder) {
 
 /** Open the bulk optimizer for a FilePicker instance. */
 export async function openBulk(picker) {
+  if (typeof picker === "string") picker = { target: picker };   // public API: optimizeFolder("path/") or optimizeFolder()
+  picker ??= {};
   const source = picker.activeSource ?? "data";
   if (source !== "data") return ui.notifications.warn(t("Bulk.OnlyData"));
-  const folder = dec(picker.target ?? "");
+  const folder = dec(picker.target ?? "").replace(/^\/+/, "");
   if (PROTECTED.test(folder)) return ui.notifications.warn(t("Bulk.Protected"));
   const esc = foundry.utils.escapeHTML;
   const choice = await foundry.applications.api.DialogV2.prompt({
@@ -89,12 +91,14 @@ async function run(source, folder, { recursive, refs, adopt }) {
         const fileCfg = applyProfile(cfg, respectProfiles() ? getProfile(path) : null);   // a module profile overrides the global image settings
         const outExt = kind === "image" ? imageFormat(fileCfg.image.format).ext : OUT_EXT[kind];
         const target = `${dir ? `${dir}/` : ""}${stem(baseName(path))}.${outExt}`;
+        if (key(target) === key(path)) { stats.skipped++; continue; }   // already in the output format (e.g. a jpeg profile on .jpg files)
         if (existing.has(key(target))) {            // a converted copy is already there: don't redo the work
           if (adopt) moved.set(path, target);       // ...but optionally point references at it
           stats.skipped++;
           continue;
         }
-        const res = await fetch(foundry.utils.getRoute(encodeURI(path)));
+        // encodeURI would leave "#" and "?" in file names raw and truncate the request URL
+        const res = await fetch(foundry.utils.getRoute(path.split("/").map(encodeURIComponent).join("/")));
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const file = new File([await res.blob()], baseName(path));
         const r = await optimize(file, fileCfg);
