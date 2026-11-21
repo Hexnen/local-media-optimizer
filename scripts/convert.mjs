@@ -113,6 +113,8 @@ export async function optimizeImageBlob(blob, { maxEdge = 8192, maxPixels = 0, q
     try { const b = await createImageBitmap(blob); width = b.width; height = b.height; b.close?.(); } catch { /* unknown size */ }
     return { blob, changed: false, width, height, bytesBefore: before, bytesAfter: before, format: ext === "jpg" ? "jpeg" : ext };
   };
+  // GIF (maybe animated) and SVG (vector) are left alone, as on upload: canvas would keep one flat frame
+  if (/^image\/(gif|svg)/.test(blob.type) || ext === "gif" || ext === "svg") return unchanged();
   const out = await convertImage(file, { quality, maxDim: maxEdge, maxPixels, format });
   if (!out) return unchanged();
   const gain = 1 - out.blob.size / before;
