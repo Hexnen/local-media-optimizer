@@ -12,10 +12,15 @@ const PROTECTED = /^(modules|systems)(\/|$)/;   // package folders are never tou
 const dec = p => { try { return decodeURIComponent(p); } catch { return p; } };
 const key = p => p.toLowerCase();               // Windows file systems are case-insensitive
 
-async function collect(source, dir, recursive, out = []) {
+/** Files under dir. An unreadable SUBfolder (no permission, removed meanwhile) is logged and skipped instead of aborting the run. */
+async function collect(source, dir, recursive, log, out = []) {
   const r = await FP().browse(source, dir);
   out.push(...r.files.map(dec));
-  if (recursive) for (const d of r.dirs.map(dec)) if (!PROTECTED.test(d)) await collect(source, d, true, out);
+  if (recursive) for (const d of r.dirs.map(dec)) {
+    if (PROTECTED.test(d)) continue;
+    try { await collect(source, d, true, log, out); }
+    catch (err) { log.push(`SKIPPED folder ${d}: ${err.message}`); }
+  }
   return out;
 }
 
@@ -73,7 +78,7 @@ async function run(source, folder, { recursive, refs, adopt }) {
   const moved = new Map();
   const made = new Map();   // key(target) -> source path converted in THIS run (a.png and a.jpg both map to a.webp)
   try {
-    const all = await collect(source, folder, recursive);
+    const all = await collect(source, folder, recursive, log);
     const existing = new Set(all.map(key));
     const todo = all.filter(p => {
       const k = kindOf(p);
