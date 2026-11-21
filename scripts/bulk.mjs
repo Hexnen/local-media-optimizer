@@ -162,14 +162,23 @@ async function run(source, folder, { recursive, refs, adopt }) {
 // ---------- reference rewriting ----------
 const escapeRe = s => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
-/** Patterns for old path -> new path, in decoded form, URL-encoded form, and with a leading slash. */
+/**
+ * Patterns for old path -> new path, in decoded form, URL-encoded form, and with a leading slash.
+ * Many paths share one alternation regex (in chunks) plus a lookup: one regex per moved file made a big bulk run
+ * test every world string thousands of times (2000 files x 50k strings took minutes, twice, with the tab frozen).
+ */
 export function buildPairs(map) {
-  const pairs = [];
+  const lookup = new Map();
   for (const [from, to] of map) {
-    for (const [a, b] of [[from, to], [encodeURI(from), encodeURI(to)]]) {
-      pairs.push([new RegExp(`(?<![\\w/.%-])${escapeRe(a)}(?![\\w%-]|\\.\\w)`, "g"), b]);
-      pairs.push([new RegExp(`(?<![\\w.%/-])/${escapeRe(a)}(?![\\w%-]|\\.\\w)`, "g"), `/${b}`]);
-    }
+    if (!lookup.has(from)) lookup.set(from, to);
+    const enc = encodeURI(from);
+    if (!lookup.has(enc)) lookup.set(enc, encodeURI(to));
+  }
+  const keys = [...lookup.keys()].sort((a, b) => b.length - a.length);
+  const pairs = [];
+  for (let i = 0; i < keys.length; i += 256) {
+    const alts = keys.slice(i, i + 256).map(escapeRe).join("|");
+    pairs.push([new RegExp(`(?<![\\w.%/-])(/?)(${alts})(?![\\w%-]|\\.\\w)`, "g"), (m, slash, p) => slash + lookup.get(p)]);
   }
   return pairs;
 }
@@ -177,7 +186,7 @@ export function buildPairs(map) {
 export function replaceDeep(value, pairs, stats) {
   if (typeof value === "string") {
     let out = value;
-    for (const [re, to] of pairs) out = out.replace(re, () => { stats.count++; return to; });
+    for (const [re, to] of pairs) out = out.replace(re, (...m) => { stats.count++; return typeof to === "function" ? to(...m) : to; });
     return out === value ? { value, changed: false } : { value: out, changed: true };
   }
   if (Array.isArray(value)) {
