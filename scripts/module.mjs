@@ -46,7 +46,7 @@ Hooks.once("init", () => {
 /** Optimize with a progress notification. Never throws: resolves to the optimize() result, or null to upload the original. */
 async function optimizeForUpload(file, profile) {
   if (!kindOf(file.name)) return null;
-  const note = ui.notifications.info(t("Optimizing", { name: file.name }), { progress: true });
+  const note = ui.notifications.info(t("Optimizing", { name: file.name }), { progress: true, console: false });   // console:false - every progress tick would log
   try {
     return await optimize(file, applyProfile(config(), profile), p => note?.update?.({ pct: p }));
   } catch (err) {
